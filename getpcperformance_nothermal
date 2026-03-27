@@ -6,7 +6,7 @@
 # ==============================================================
 
 # ================= ADMIN CONFIG =================
-$AdminSharePath = "\\zfs1\IT-BO\Misc\performance_PS\$"   # <-- CHANGE THIS
+$AdminSharePath = "C:\temp\performance_PS\$"   # <-- CHANGE THIS
 $HtmlTitle      = "Desktop Performance Diagnostic Report"
 
 # ================= LOCAL PATHS =================
