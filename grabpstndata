@@ -1,0 +1,63 @@
+# ==========================================================
+# Teams PSTN Call Records Export via Microsoft Graph
+# ==========================================================
+
+# -------- CONFIG --------
+$OutputPath = ".\TeamsPSTNExport"
+New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
+
+# -------- CONNECT TO GRAPH --------
+Import-Module Microsoft.Graph
+Connect-MgGraph -Scopes "CallRecords.Read.All"
+
+Write-Host "Connected to Microsoft Graph"
+
+# -------- GET ALL CALL RECORDS --------
+Write-Host "Retrieving call records (this can take a few minutes)..."
+
+$callRecords = Get-MgCommunicationCallRecord -All
+
+Write-Host "Total calls retrieved:" $callRecords.Count
+
+# -------- FILTER PSTN CALLS --------
+$pstnCalls = $callRecords | Where-Object {
+    $_.CallType -eq "pstn"
+}
+
+Write-Host "PSTN calls found:" $pstnCalls.Count
+
+# -------- CREATE SUMMARY OBJECT --------
+$pstnSummary = $pstnCalls | ForEach-Object {
+    [PSCustomObject]@{
+        CallId         = $_.Id
+        StartTime      = $_.StartDateTime
+        EndTime        = $_.EndDateTime
+        DurationSeconds= (New-TimeSpan -Start $_.StartDateTime -End $_.EndDateTime).TotalSeconds
+        Organizer      = $_.Organizer.User.Id
+        CallType       = $_.CallType
+        Modalities     = ($_.Modalities -join ",")
+    }
+}
+
+$pstnSummary |
+Export-Csv "$OutputPath\PSTN_Calls_Summary.csv" -NoTypeInformation
+
+# -------- GET SESSIONS + SEGMENTS --------
+$allSessions = @()
+$allSegments = @()
+$failedCalls = @()
+
+foreach ($call in $pstnCalls) {
+
+    Write-Host "Processing Call ID:" $call.Id
+
+    $sessions = Get-MgCommunicationCallRecordSession `
+        -CallRecordId $call.Id `
+        -ErrorAction SilentlyContinue
+
+    foreach ($session in $sessions) {
+
+        $allSessions += [PSCustomObject]@{
+            CallId        = $call.Id
+            SessionId     = $session.Id
+            UserId        = $session.Caller.User.Id
