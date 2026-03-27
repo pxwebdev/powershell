@@ -1,0 +1,11 @@
+# By IP
+Resolve-DnsName 192.168.1.50
+
+# By MAC
+Get-FogMacAddresses | Where-Object mac -eq '00:11:22:33:44:55'
+
+# By Computer Name
+Get-ADComputer COMPUTERNAME -Properties *
+
+# Live system info
+Get-CimInstance Win32_ComputerSystem -ComputerName COMPUTERNAME
