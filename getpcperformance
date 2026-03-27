@@ -1,0 +1,49 @@
+# ==============================================================
+# Advanced Desktop Performance Diagnostic Script
+# Windows 11 24H2 / 25H2 - Domain Joined
+
+# ==============================================================
+
+$OutputDir = "C:\Temp"
+if (!(Test-Path $OutputDir)) {
+    New-Item -ItemType Directory -Path $OutputDir | Out-Null
+}
+
+$ComputerName = $env:COMPUTERNAME
+$UserName = (Get-CimInstance Win32_ComputerSystem).UserName
+$TimeStamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+$TxtReport = "$OutputDir\$ComputerName-Performance-$TimeStamp.txt"
+$CsvReport = "$OutputDir\$ComputerName-Performance-$TimeStamp.csv"
+
+$CsvData = @()
+
+function Write-Section {
+    param ($Title)
+    Add-Content $TxtReport "`n==============================="
+    Add-Content $TxtReport $Title
+    Add-Content $TxtReport "==============================="
+}
+
+function Add-CsvRow {
+    param ($Category, $Metric, $Value)
+    $CsvData += [PSCustomObject]@{
+        Computer = $ComputerName
+        Category = $Category
+        Metric   = $Metric
+        Value    = $Value
+    }
+}
+
+# --------------------------------------------------------------
+# SYSTEM INFO
+Add-Content $TxtReport "Computer Name : $ComputerName"
+Add-Content $TxtReport "Logged-on User : $UserName"
+Add-Content $TxtReport "Date           : $(Get-Date)"
+Add-Content $TxtReport "OS             : $((Get-CimInstance Win32_OperatingSystem).Caption)"
+$Uptime = ((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours
+Add-Content $TxtReport ("Uptime (hrs)   : {0:N2}" -f $Uptime)
+Add-CsvRow "System" "UptimeHours" ([math]::Round($Uptime,2))
+
+# --------------------------------------------------------------
+Write-Section "CPU PERFORMANCE"
+
