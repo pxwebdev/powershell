@@ -1,0 +1,199 @@
+# ==============================================================
+# COMPLETE Desktop Performance Diagnostic Script
+# Windows 11 24H2 / 25H2 | Domain Joined
+# Generates TXT + CSV + REAL HTML Dashboard
+# Auto-copies results to admin machine
+# ==============================================================
+
+# ================= ADMIN CONFIG =================
+$AdminSharePath = "\\zfs1\IT-BO\Misc\performance_PS\$"   # <-- CHANGE THIS
+$HtmlTitle      = "Desktop Performance Diagnostic Report"
+
+# ================= LOCAL PATHS =================
+$LocalDir = "C:\Temp"
+if (!(Test-Path $LocalDir)) { New-Item -ItemType Directory -Path $LocalDir | Out-Null }
+
+$Computer = $env:COMPUTERNAME
+$User     = (Get-CimInstance Win32_ComputerSystem).UserName
+$Time     = Get-Date -Format "yyyy-MM-dd_HHmmss"
+
+$Txt  = "$LocalDir\$Computer-Performance-$Time.txt"
+$Csv  = "$LocalDir\$Computer-Performance-$Time.csv"
+$Html = "$LocalDir\$Computer-Performance-$Time.html"
+
+$CsvData = @()
+
+# ================= HELPERS =================
+function Add-Csv {
+    param ($Category, $Metric, $Value)
+    $Global:CsvData += [PSCustomObject]@{
+        Computer = $Computer
+        Category = $Category
+        Metric   = $Metric
+        Value    = $Value
+    }
+}
+
+function Section($Title) {
+    Add-Content $Txt "`n==============================="
+    Add-Content $Txt $Title
+    Add-Content $Txt "==============================="
+}
+
+# ================= SYSTEM =================
+Add-Content $Txt "Computer : $Computer"
+Add-Content $Txt "User     : $User"
+Add-Content $Txt "Date     : $(Get-Date)"
+Add-Content $Txt "OS       : $((Get-CimInstance Win32_OperatingSystem).Caption)"
+
+$Uptime = ((Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime).TotalHours
+Add-Content $Txt ("Uptime   : {0:N2} hours" -f $Uptime)
+Add-Csv "System" "UptimeHours" ([math]::Round($Uptime,2))
+
+# ================= CPU =================
+Section "CPU Performance"
+$cpu = Get-Counter '\Processor(_Total)\% Processor Time',
+                   '\System\Processor Queue Length'
+
+foreach ($c in $cpu.CounterSamples) {
+    Add-Content $Txt ("{0} = {1:N2}" -f $c.Path, $c.CookedValue)
+    Add-Csv "CPU" $c.Path ([math]::Round($c.CookedValue,2))
+}
+
+# ================= MEMORY =================
+Section "Memory Performance"
+$mem = Get-Counter '\Memory\Available MBytes',
+                   '\Memory\Pages/sec'
+
+foreach ($m in $mem.CounterSamples) {
+    Add-Content $Txt ("{0} = {1:N2}" -f $m.Path, $m.CookedValue)
+    Add-Csv "Memory" $m.Path ([math]::Round($m.CookedValue,2))
+}
+
+# ================= DISK =================
+Section "Disk Latency (Critical)"
+$disk = Get-Counter '\PhysicalDisk(_Total)\Avg. Disk sec/Read',
+                    '\PhysicalDisk(_Total)\Avg. Disk sec/Write',
+                    '\PhysicalDisk(_Total)\% Disk Time'
+
+foreach ($d in $disk.CounterSamples) {
+    Add-Content $Txt ("{0} = {1:N4}" -f $d.Path, $d.CookedValue)
+    Add-Csv "Disk" $d.Path ([math]::Round($d.CookedValue,4))
+}
+
+# ================= STARTUP =================
+Section "Startup Impact Analysis"
+$startup = Get-CimInstance Win32_StartupCommand
+$startup | Format-Table -AutoSize | Out-String | Add-Content $Txt
+$startup | ForEach-Object { Add-Csv "Startup" $_.Name $_.Command }
+
+# ================= BATTERY =================
+Section "Battery"
+$batt = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue
+if ($batt) {
+    Add-Content $Txt "Charge Remaining: $($batt.EstimatedChargeRemaining)%"
+    Add-Csv "Battery" "ChargeRemainingPercent" $batt.EstimatedChargeRemaining
+} else {
+    Add-Content $Txt "No battery detected (Desktop)"
+}
+
+# ================= THERMAL =================
+Section "Thermal / Power Events (Last 24h)"
+$events = Get-WinEvent -FilterHashtable @{
+    LogName='System'
+    ProviderName='Microsoft-Windows-Kernel-Power'
+    StartTime=(Get-Date).AddHours(-24)
+} -ErrorAction SilentlyContinue
+
+$events | Select TimeCreated, Id, Message |
+    Format-Table -Wrap | Out-String | Add-Content $Txt
+$events | ForEach-Object { Add-Csv "Thermal" "KernelPowerEvent" $_.Id }
+
+# ================= CSV EXPORT =================
+$CsvData | Export-Csv $Csv -NoTypeInformation
+
+# ================= HTML DASHBOARD =================
+function MetricValue($Category, $Match) {
+    ($CsvData | Where-Object {
+        $_.Category -eq $Category -and $_.Metric -like "*$Match*"
+    } | Select-Object -First 1).Value
+}
+
+$cpuPct   = MetricValue "CPU" "Processor Time"
+$memFree  = MetricValue "Memory" "Available"
+$diskRead = MetricValue "Disk" "Read"
+$diskWrite= MetricValue "Disk" "Write"
+$diskBusy = MetricValue "Disk" "Disk Time"
+$battery  = MetricValue "Battery" "Charge"
+
+$HtmlContent = @"
+<!DOCTYPE html>
+<html>
+<head>
+<title>$HtmlTitle</title>
+<style>
+body { font-family:Segoe UI; background:#f2f2f2 }
+h1 { background:#0078D4; color:white; padding:15px }
+.section { background:white; margin:15px; padding:15px; border-radius:6px }
+.red { color:red; font-weight:bold }
+.orange { color:orange; font-weight:bold }
+.green { color:green; font-weight:bold }
+table { width:100%; border-collapse:collapse }
+td,th { border-bottom:1px solid #ddd; padding:6px }
+</style>
+</head>
+<body>
+
+<h1>$HtmlTitle</h1>
+
+<div class="section">
+<b>Computer:</b> $Computer<br>
+<b>User:</b> $User<br>
+<b>Generated:</b> $(Get-Date)
+</div>
+
+<div class="section">
+<h2>CPU</h2>
+Usage: $cpuPct %
+</div>
+
+<div class="section">
+<h2>Memory</h2>
+Free Memory: $memFree MB
+</div>
+
+<div class="section">
+<h2>Disk</h2>
+Read Latency: $diskRead sec<br>
+Write Latency: $diskWrite sec<br>
+Disk Busy: $diskBusy %
+</div>
+
+<div class="section">
+<h2>Battery</h2>
+$(if ($battery) { "$battery %" } else { "Desktop / No Battery" })
+</div>
+
+<div class="section">
+<h2>Startup Applications</h2>
+<table>
+<tr><th>Name</th><th>Command</th></tr>
+$(
+($CsvData | Where-Object Category -eq "Startup") |
+ForEach-Object { "<tr><td>$($_.Metric)</td><td>$($_.Value)</td></tr>" }
+)
+</table>
+</div>
+
+</body>
+</html>
+"@
+
+$HtmlContent | Out-File $Html -Encoding UTF8
+
+# ================= COPY BACK =================
+if (Test-Path $AdminSharePath) {
+    Copy-Item $Txt,$Csv,$Html -Destination $AdminSharePath -Force
+}
+
+"$Txt`n$Csv`n$Html"
