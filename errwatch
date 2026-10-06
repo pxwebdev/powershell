@@ -1,13 +1,27 @@
-$folder = 'C:\LFaxOut' # Enter the root path you want to monitor. 
-$filter = '*.err'  # You can enter a wildcard filter here. 
+$folder = 'C:\LFaxOut'
+$filter = '*.err'
+$log    = 'C:\pstools\systool\fsw.log'
 
-$fsw = New-Object IO.FileSystemWatcher $folder, $filter -Property @{IncludeSubdirectories = $false;NotifyFilter = [IO.NotifyFilters]'FileName, LastWrite'}
+$fsw = [System.IO.FileSystemWatcher]::new($folder, $filter)
+$fsw.IncludeSubdirectories = $false
+$fsw.NotifyFilter = [IO.NotifyFilters]'FileName, LastWrite'
+$fsw.EnableRaisingEvents = $true
 
-Register-ObjectEvent $fsw Created -SourceIdentifier FileCreated -Action { 
-$name = $Event.SourceEventArgs.Name 
-$changeType = $Event.SourceEventArgs.ChangeType 
-$timeStamp = $Event.TimeGenerated 
-Write-Host "The file '$name' was $changeType at $timeStamp" -fore green 
-write-host "test"
-Invoke-Item 'C:\pstools\systool\uptime.ps1'
+$null = Register-ObjectEvent $fsw Created -SourceIdentifier LFaxErrCreated -Action {
+    $name = $Event.SourceEventArgs.Name
+    $path = $Event.SourceEventArgs.FullPath
+    $ts   = $Event.TimeGenerated
+
+    Add-Content -Path 'C:\pstools\systool\fsw.log' -Value "$ts  $name created"
+
+    Start-Sleep -Seconds 1   # let the writer finish
+    & 'C:\pstools\systool\uptime.ps1' -Path $path
+}
+
+try {
+    while ($true) { Start-Sleep -Seconds 5 }   # keep-alive
+}
+finally {
+    Unregister-Event -SourceIdentifier LFaxErrCreated -ErrorAction SilentlyContinue
+    $fsw.Dispose()
 }
